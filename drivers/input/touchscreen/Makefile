@@ -81,6 +81,7 @@ obj-$(CONFIG_TOUCHSCREEN_SURFACE3_SPI)	+= surface3_spi.o
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_TD) += synaptics_dsx_td4322/
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_v26)	+= synaptics_dsx_2.6/
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_TCM) += synaptics_tcm/
+obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FORCE) += synaptics_dsx_force/
 obj-$(CONFIG_TOUCHSCREEN_NVT_D2S) 	+= nvt_touch_d2s/
 obj-$(CONFIG_TOUCHSCREEN_FOCAL_FT8719)  += focal_ft8719/
 obj-$(CONFIG_TOUCHSCREEN_NVT_A) 	+= nvt_touch_a/
