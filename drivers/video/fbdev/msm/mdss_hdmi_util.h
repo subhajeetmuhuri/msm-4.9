@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -466,6 +466,8 @@ struct hdmi_tx_ddc_ctrl {
 struct hdmi_util_ds_data {
 	bool ds_registered;
 	u32 ds_max_clk;
+	u32 modes_num;
+	u32 *modes;
 };
 
 static inline int hdmi_tx_get_v_total(const struct msm_hdmi_mode_timing_info *t)
@@ -488,6 +490,7 @@ static inline int hdmi_tx_get_h_total(const struct msm_hdmi_mode_timing_info *t)
 	return 0;
 }
 
+bool hdmi_util_is_ce_mode(u32 vic);
 /* video timing related utility routines */
 int hdmi_get_video_id_code(struct msm_hdmi_mode_timing_info *timing_in,
 	struct hdmi_util_ds_data *ds_data);
@@ -504,9 +507,6 @@ int hdmi_tx_setup_tmds_clk_rate(u32 pixel_freq, u32 out_format, bool dc_enable);
 
 /* todo: Fix this. Right now this is defined in mdss_hdmi_tx.c */
 void *hdmi_get_featuredata_from_sysfs_dev(struct device *device, u32 type);
-
-/* get hdmi panel power is on or not*/
-ssize_t hdmi_tx_is_HDMI_panel_power_on(struct device *device);
 
 /* DDC */
 void hdmi_ddc_config(struct hdmi_tx_ddc_ctrl *);

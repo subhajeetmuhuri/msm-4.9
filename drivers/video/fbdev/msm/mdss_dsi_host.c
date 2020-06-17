@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -62,7 +62,7 @@ struct mdss_hw mdss_dsi1_hw = {
 
 #define DSI_EVENT_Q_MAX	4
 
-#define DSI_BTA_EVENT_TIMEOUT (100)
+#define DSI_BTA_EVENT_TIMEOUT (HZ / 10)
 
 /* Mutex common for both the controllers */
 static struct mutex dsi_mtx;
@@ -1190,22 +1190,12 @@ int mdss_dsi_reg_status_check(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	int ret = 0;
 	struct mdss_dsi_ctrl_pdata *sctrl_pdata = NULL;
-#ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
-	struct mipi_panel_info *mipi = NULL;
-#endif /* CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL */
 
 	if (ctrl_pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
 		return 0;
 	}
 
-#ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
-	mipi = &ctrl_pdata->panel_data.panel_info.mipi;
-	if (mipi->switch_mode_pending == true) {
-		pr_err("%s: Skip status check, Pending switch mode\n", __func__);
-		return 0;
-	}
-#endif /* CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL */
 	pr_debug("%s: Checking Register status\n", __func__);
 
 	mdss_dsi_clk_ctrl(ctrl_pdata, ctrl_pdata->dsi_clk_handle,
@@ -1633,7 +1623,7 @@ int mdss_dsi_bta_status_check(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 	wmb();
 
 	ret = wait_for_completion_killable_timeout(&ctrl_pdata->bta_comp,
-						msecs_to_jiffies(DSI_BTA_EVENT_TIMEOUT));
+						DSI_BTA_EVENT_TIMEOUT);
 	if (ret <= 0) {
 		mdss_dsi_disable_irq(ctrl_pdata, DSI_BTA_TERM);
 		pr_err("%s: DSI BTA error: %i\n", __func__, ret);
@@ -2273,7 +2263,7 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 			/* clear CMD DMA and BTA_DONE isr only */
 			reg_val |= (DSI_INTR_CMD_DMA_DONE | DSI_INTR_BTA_DONE);
 			MIPI_OUTP(ctrl->ctrl_base + 0x0110, reg_val);
-			mdss_dsi_disable_irq_nosync(ctrl, DSI_CMD_TERM);
+			mdss_dsi_disable_irq(ctrl, DSI_CMD_TERM);
 			complete(&ctrl->dma_comp);
 
 			pr_warn("%s: dma tx done but irq not triggered\n",
@@ -2678,7 +2668,7 @@ int mdss_dsi_cmdlist_rx(struct mdss_dsi_ctrl_pdata *ctrl,
 }
 
 static inline bool mdss_dsi_delay_cmd(struct mdss_dsi_ctrl_pdata *ctrl,
-	bool from_mdp)
+	bool from_mdp, struct dcs_cmd_req *req)
 {
 	unsigned long flags;
 	bool mdp_busy = false;
@@ -2688,9 +2678,9 @@ static inline bool mdss_dsi_delay_cmd(struct mdss_dsi_ctrl_pdata *ctrl,
 		goto exit;
 
 	/* delay only for split dsi, cmd mode and burst mode enabled cases */
-	if (!mdss_dsi_is_hw_config_split(ctrl->shared_data) ||
+	if ((!mdss_dsi_is_hw_config_split(ctrl->shared_data) ||
 	    !(ctrl->panel_mode == DSI_CMD_MODE) ||
-	    !ctrl->burst_mode_enabled)
+	    !ctrl->burst_mode_enabled) && !(req->flags & CMD_REQ_DCS))
 		goto exit;
 
 	/* delay only if cmd is not from mdp and panel has been initialized */
@@ -2699,8 +2689,10 @@ static inline bool mdss_dsi_delay_cmd(struct mdss_dsi_ctrl_pdata *ctrl,
 
 	/* if broadcast enabled, apply delay only if this is the ctrl trigger */
 	if (mdss_dsi_sync_wait_enable(ctrl) &&
-	   !mdss_dsi_sync_wait_trigger(ctrl))
+	   (!mdss_dsi_sync_wait_trigger(ctrl) && !(req->flags & CMD_REQ_DCS)))
 		goto exit;
+	else
+		need_wait = true;
 
 	spin_lock_irqsave(&ctrl->mdp_lock, flags);
 	if (ctrl->mdp_busy == true)
@@ -2840,7 +2832,7 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	 * mdp path
 	 */
 	mutex_lock(&ctrl->mutex);
-	if (mdss_dsi_delay_cmd(ctrl, from_mdp))
+	if (mdss_dsi_delay_cmd(ctrl, from_mdp, req))
 		ctrl->mdp_callback->fxn(ctrl->mdp_callback->data,
 			MDP_INTF_CALLBACK_DSI_WAIT);
 	mutex_unlock(&ctrl->mutex);

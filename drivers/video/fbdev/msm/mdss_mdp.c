@@ -1,7 +1,7 @@
 /*
  * MDSS MDP Interface (used by framebuffer core)
  *
- * Copyright (c) 2007-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2019, The Linux Foundation. All rights reserved.
  * Copyright (C) 2007 Google Incorporated
  *
  * This software is licensed under the terms of the GNU General Public
@@ -1374,13 +1374,9 @@ static inline void __mdss_mdp_reg_access_clk_enable(
 		mdss_mdp_clk_update(MDSS_CLK_AXI, 1);
 		mdss_mdp_clk_update(MDSS_CLK_MDP_CORE, 1);
 		mdss_mdp_clk_update(MDSS_CLK_THROTTLE_AXI, 1);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU, 1);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU_RT, 1);
 	} else {
 		mdss_mdp_clk_update(MDSS_CLK_THROTTLE_AXI, 0);
 		mdss_mdp_clk_update(MDSS_CLK_MDP_CORE, 0);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU_RT, 0);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU, 0);
 		mdss_mdp_clk_update(MDSS_CLK_AXI, 0);
 		mdss_mdp_clk_update(MDSS_CLK_AHB, 0);
 		mdss_mdp_clk_update(MDSS_CLK_MNOC_AHB, 0);
@@ -1421,8 +1417,6 @@ static void __mdss_mdp_clk_control(struct mdss_data_type *mdata, bool enable)
 		mdss_mdp_clk_update(MDSS_CLK_AXI, 1);
 		mdss_mdp_clk_update(MDSS_CLK_MDP_CORE, 1);
 		mdss_mdp_clk_update(MDSS_CLK_MDP_LUT, 1);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU, 1);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU_RT, 1);
 		mdss_mdp_clk_update(MDSS_CLK_THROTTLE_AXI, 1);
 		if (mdata->vsync_ena)
 			mdss_mdp_clk_update(MDSS_CLK_MDP_VSYNC, 1);
@@ -1434,8 +1428,6 @@ static void __mdss_mdp_clk_control(struct mdss_data_type *mdata, bool enable)
 		if (mdata->vsync_ena)
 			mdss_mdp_clk_update(MDSS_CLK_MDP_VSYNC, 0);
 
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU_RT, 0);
-		mdss_mdp_clk_update(MDSS_CLK_MDP_TBU, 0);
 		mdss_mdp_clk_update(MDSS_CLK_MDP_LUT, 0);
 		mdss_mdp_clk_update(MDSS_CLK_MDP_CORE, 0);
 		mdss_mdp_clk_update(MDSS_CLK_AXI, 0);
@@ -1931,12 +1923,6 @@ static int mdss_mdp_irq_clk_setup(struct mdss_data_type *mdata)
 	    mdss_mdp_irq_clk_register(mdata, "core_clk", MDSS_CLK_MDP_CORE))
 		return -EINVAL;
 
-	/* tbu_clk is not present on all MDSS revisions */
-	mdss_mdp_irq_clk_register(mdata, "tbu_clk", MDSS_CLK_MDP_TBU);
-
-	/* tbu_rt_clk is not present on all MDSS revisions */
-	mdss_mdp_irq_clk_register(mdata, "tbu_rt_clk", MDSS_CLK_MDP_TBU_RT);
-
 	/* lut_clk is not present on all MDSS revisions */
 	mdss_mdp_irq_clk_register(mdata, "lut_clk", MDSS_CLK_MDP_LUT);
 
@@ -2105,28 +2091,10 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 		mdata->props = mdss_get_props();
 		break;
 	case MDSS_MDP_HW_REV_112:
-	case MDSS_MDP_HW_REV_111:
-		pr_info("mdss_mdp: Setting caps for HW_REV_111.\n");
 		mdata->max_target_zorder = 4; /* excluding base layer */
 		mdata->max_cursor_size = 64;
 		mdata->min_prefill_lines = 12;
-		mdata->has_ubwc = true;
-		mdata->per_pipe_ib_factor.numer = 8;
-		mdata->per_pipe_ib_factor.denom = 5;
-		mdata->apply_post_scale_bytes = false;
-		mdata->hflip_buffer_reused = false;
-		set_bit(MDSS_QOS_OVERHEAD_FACTOR, mdata->mdss_qos_map);
-		set_bit(MDSS_QOS_PER_PIPE_LUT, mdata->mdss_qos_map);
-		set_bit(MDSS_QOS_SIMPLIFIED_PREFILL, mdata->mdss_qos_map);
-		set_bit(MDSS_CAPS_YUV_CONFIG, mdata->mdss_caps_map);
-		set_bit(MDSS_QOS_CDP, mdata->mdss_qos_map); /* cdp supported */
-		mdata->enable_cdp = false; /* disable cdp */
-		mdss_mdp_init_default_prefill_factors(mdata);
 		set_bit(MDSS_QOS_OTLIM, mdata->mdss_qos_map);
-		mdss_set_quirk(mdata, MDSS_QUIRK_MIN_BUS_VOTE);
-		mdss_set_quirk(mdata, MDSS_QUIRK_DMA_BI_DIR);
-		mdss_set_quirk(mdata, MDSS_QUIRK_NEED_SECURE_MAP);
-		mdss_set_quirk(mdata, MDSS_QUIRK_MDP_CLK_SET_RATE);
 		break;
 	case MDSS_MDP_HW_REV_114:
 		/* disable ECG for 28nm PHY platform */
@@ -3149,7 +3117,8 @@ static int mdss_mdp_probe(struct platform_device *pdev)
 		MDSS_MDP_REG_SPLIT_DISPLAY_EN);
 	if (intf_sel != 0) {
 		for (i = 0; i < 4; i++)
-			num_of_display_on += ((intf_sel >> i*8) & 0x000000FF);
+			num_of_display_on +=
+				(((intf_sel >> i*8) & 0x000000FF) ? 1 : 0);
 
 		/*
 		 * For split display enabled - DSI0, DSI1 interfaces are
@@ -4477,8 +4446,6 @@ static int mdss_mdp_parse_dt_misc(struct platform_device *pdev)
 		pr_debug("wfd mode: %s\n", wfd_data);
 		if (!strcmp(wfd_data, "intf")) {
 			mdata->wfd_mode = MDSS_MDP_WFD_INTERFACE;
-		} else if (!strcmp(wfd_data, "intf_no_dspp")) {
-			mdata->wfd_mode = MDSS_MDP_WFD_INTF_NO_DSPP;
 		} else if (!strcmp(wfd_data, "shared")) {
 			mdata->wfd_mode = MDSS_MDP_WFD_SHARED;
 		} else if (!strcmp(wfd_data, "dedicated")) {
@@ -4976,7 +4943,6 @@ static void apply_dynamic_ot_limit(u32 *ot_lim,
 		params->is_yuv, params->is_wfd, res, params->frame_rate);
 
 	switch (mdata->mdp_rev) {
-	case MDSS_MDP_HW_REV_111:
 	case MDSS_MDP_HW_REV_114:
 	case MDSS_MDP_HW_REV_115:
 	case MDSS_MDP_HW_REV_116:

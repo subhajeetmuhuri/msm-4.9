@@ -107,39 +107,15 @@ static int dsi_core_clk_start(struct dsi_core_clks *c_clks)
 		}
 	}
 
-	if (c_clks->clks.tbu_clk) {
-		rc = clk_prepare_enable(c_clks->clks.tbu_clk);
-		if (rc) {
-			pr_err("%s: failed to enable mdp tbu clk.rc=%d\n",
-				__func__, rc);
-			goto disable_mmss_misc_clk;
-		}
-	}
-
-	if (c_clks->clks.tbu_rt_clk) {
-		rc = clk_prepare_enable(c_clks->clks.tbu_rt_clk);
-		if (rc) {
-			pr_err("%s: failed to enable mdp tbu rt clk.rc=%d\n",
-				__func__, rc);
-			goto disable_tbu_clk;
-		}
-	}
-
 	rc = mdss_update_reg_bus_vote(mngr->reg_bus_clt, VOTE_INDEX_LOW);
 	if (rc) {
 		pr_err("failed to vote for reg bus\n");
-		goto disable_tbu_rt_clk;
+		goto disable_mmss_misc_clk;
 	}
 
 	pr_debug("%s:CORE CLOCK IS ON\n", mngr->name);
 	return rc;
 
-disable_tbu_rt_clk:
-	if (c_clks->clks.tbu_rt_clk)
-		clk_disable_unprepare(c_clks->clks.tbu_rt_clk);
-disable_tbu_clk:
-	if (c_clks->clks.tbu_clk)
-		clk_disable_unprepare(c_clks->clks.tbu_clk);
 disable_mmss_misc_clk:
 	if (c_clks->clks.mmss_misc_ahb_clk)
 		clk_disable_unprepare(c_clks->clks.mmss_misc_ahb_clk);
@@ -165,10 +141,6 @@ static int dsi_core_clk_stop(struct dsi_core_clks *c_clks)
 	mngr = container_of(c_clks, struct mdss_dsi_clk_mngr, core_clks);
 
 	mdss_update_reg_bus_vote(mngr->reg_bus_clt, VOTE_INDEX_DISABLE);
-	if (c_clks->clks.tbu_clk)
-		clk_disable_unprepare(c_clks->clks.tbu_clk);
-	if (c_clks->clks.tbu_rt_clk)
-		clk_disable_unprepare(c_clks->clks.tbu_rt_clk);
 	if (c_clks->clks.mmss_misc_ahb_clk)
 		clk_disable_unprepare(c_clks->clks.mmss_misc_ahb_clk);
 	clk_disable_unprepare(c_clks->clks.axi_clk);
@@ -200,20 +172,6 @@ static int dsi_link_clk_set_rate(struct dsi_link_clks *l_clks)
 	ctrl = mngr->priv_data;
 	if (ctrl->panel_data.panel_info.cont_splash_enabled)
 		return 0;
-
-	/*
-	 * MSM8998 on common clk framework requires the mmcc clocks
-	 * to get fully reconfigured after suspend due to an unknown
-	 * bug.
-	 * This hack will be fully removed as soon as the bug on this
-	 * SoC will get solved.
-	 */
-	if (ctrl->platform_clk_reconf_hack) {
-		rc = clk_set_rate(l_clks->clks.byte_clk,
-					l_clks->byte_clk_rate / 2);
-		rc = clk_set_rate(l_clks->clks.pixel_clk,
-					l_clks->pix_clk_rate / 2);
-	}
 
 	rc = clk_set_rate(l_clks->clks.esc_clk, l_clks->esc_clk_rate);
 	if (rc) {

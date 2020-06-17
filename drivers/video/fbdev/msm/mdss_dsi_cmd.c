@@ -760,7 +760,6 @@ int mdss_dsi_cmdlist_put(struct mdss_dsi_ctrl_pdata *ctrl,
 	mutex_lock(&ctrl->cmd_mutex);
 	mutex_lock(&ctrl->cmdlist_mutex);
 	clist = &ctrl->cmdlist;
-
 	req = &clist->list[clist->put];
 	*req = *cmdreq;
 	clist->put++;
@@ -786,7 +785,6 @@ int mdss_dsi_cmdlist_put(struct mdss_dsi_ctrl_pdata *ctrl,
 		else
 			ret = ctrl->cmdlist_commit(ctrl, 0);
 	}
-
 	mutex_unlock(&ctrl->cmd_mutex);
 
 	return ret;

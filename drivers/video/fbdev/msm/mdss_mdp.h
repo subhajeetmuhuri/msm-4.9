@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -86,7 +86,7 @@
 
 #define XIN_HALT_TIMEOUT_US	0x4000
 
-#define MAX_LAYER_COUNT		0xC
+#define MAX_LAYER_COUNT		0xD
 
 /* For SRC QSEED3, when user space does not send the scaler information,
  * this flag allows pixel _extension to be programmed when scaler is disabled
@@ -174,7 +174,6 @@ enum mdss_mdp_block_power_state {
 enum mdss_mdp_mixer_type {
 	MDSS_MDP_MIXER_TYPE_UNUSED,
 	MDSS_MDP_MIXER_TYPE_INTF,
-	MDSS_MDP_MIXER_TYPE_INTF_NO_DSPP,
 	MDSS_MDP_MIXER_TYPE_WRITEBACK,
 };
 
@@ -272,10 +271,12 @@ enum mdss_mdp_csc_type {
 	MDSS_MDP_CSC_RGB2YUV_601L,
 	MDSS_MDP_CSC_RGB2YUV_601FR,
 	MDSS_MDP_CSC_RGB2YUV_709L,
+	MDSS_MDP_CSC_RGB2YUV_709FR,
 	MDSS_MDP_CSC_RGB2YUV_2020L,
 	MDSS_MDP_CSC_RGB2YUV_2020FR,
 	MDSS_MDP_CSC_YUV2YUV,
 	MDSS_MDP_CSC_RGB2RGB,
+	MDSS_MDP_CSC_RGB2RGB_L,
 	MDSS_MDP_MAX_CSC
 };
 
@@ -283,7 +284,6 @@ enum mdp_wfd_blk_type {
 	MDSS_MDP_WFD_SHARED = 0,
 	MDSS_MDP_WFD_INTERFACE,
 	MDSS_MDP_WFD_DEDICATED,
-	MDSS_MDP_WFD_INTF_NO_DSPP,
 };
 
 enum mdss_mdp_reg_bus_cfg {
@@ -935,6 +935,7 @@ struct mdss_mdp_writeback_arg {
 struct mdss_mdp_wfd;
 
 struct mdss_overlay_private {
+	bool vsync_en;
 	ktime_t vsync_time;
 	ktime_t lineptr_time;
 	struct kernfs_node *vsync_event_sd;
@@ -977,7 +978,6 @@ struct mdss_overlay_private {
 	u32 sd_enabled;
 	u32 sc_enabled;
 
-	struct mdss_timeline *vsync_timeline;
 	struct mdss_mdp_vsync_handler vsync_retire_handler;
 	int retire_cnt;
 	bool kickoff_released;
@@ -1310,8 +1310,6 @@ static inline bool mdss_mdp_req_init_restore_cfg(struct mdss_data_type *mdata)
 	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
 				MDSS_MDP_HW_REV_108) ||
 	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
-				MDSS_MDP_HW_REV_111) ||
-	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
 				MDSS_MDP_HW_REV_112) ||
 	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
 				MDSS_MDP_HW_REV_114) ||
@@ -1336,11 +1334,7 @@ static inline int mdss_mdp_panic_signal_support_mode(
 		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
 				MDSS_MDP_HW_REV_109) ||
 		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
-				MDSS_MDP_HW_REV_110) ||
-		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
-				MDSS_MDP_HW_REV_111) ||
-		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
-				MDSS_MDP_HW_REV_112))
+				MDSS_MDP_HW_REV_110))
 		signal_mode = MDSS_MDP_PANIC_COMMON_REG_CFG;
 	else if (IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
 				MDSS_MDP_HW_REV_107) ||
@@ -1770,7 +1764,7 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff);
 int mdss_mdp_ctl_stop(struct mdss_mdp_ctl *ctl, int panel_power_mode);
 int mdss_mdp_ctl_intf_event(struct mdss_mdp_ctl *ctl, int event, void *arg,
 	u32 flags);
-int mdss_mdp_get_prefetch_lines(struct mdss_panel_info *pinfo);
+int mdss_mdp_get_prefetch_lines(struct mdss_panel_info *pinfo, bool is_fixed);
 int mdss_mdp_perf_bw_check(struct mdss_mdp_ctl *ctl,
 		struct mdss_mdp_pipe **left_plist, int left_cnt,
 		struct mdss_mdp_pipe **right_plist, int right_cnt);
@@ -1807,8 +1801,6 @@ int mdss_mdp_mixer_handoff(struct mdss_mdp_ctl *ctl, u32 num,
 void mdss_mdp_ctl_perf_set_transaction_status(struct mdss_mdp_ctl *ctl,
 	enum mdss_mdp_perf_state_type component, bool new_status);
 void mdss_mdp_ctl_perf_release_bw(struct mdss_mdp_ctl *ctl);
-void mdss_mdp_get_interface_type(struct mdss_mdp_ctl *ctl, int *intf_type,
-		int *split_needed);
 int mdss_mdp_async_ctl_flush(struct msm_fb_data_type *mfd,
 		u32 flush_bits);
 int mdss_mdp_get_pipe_flush_bits(struct mdss_mdp_pipe *pipe);

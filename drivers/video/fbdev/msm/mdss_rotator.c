@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -386,7 +386,7 @@ static int mdss_rotator_create_fence(struct mdss_rot_entry *entry)
 	rot_timeline = &entry->queue->timeline;
 
 	mutex_lock(&rot_timeline->lock);
-	val = 1;
+	val = rot_timeline->next_value + 1;
 
 	fence = mdss_get_sync_fence(rot_timeline->timeline,
 					rot_timeline->fence_name, NULL, val);
@@ -1034,11 +1034,13 @@ static int mdss_rotator_calc_perf(struct mdss_rot_perf *perf)
 	if (!config->input.width ||
 		(0xffffffff/config->input.width < config->input.height))
 		return -EINVAL;
+
+	perf->clk_rate = config->input.width * config->input.height;
+
 	if (!perf->clk_rate ||
 		(0xffffffff/perf->clk_rate < config->frame_rate))
 		return -EINVAL;
 
-	perf->clk_rate = config->input.width * config->input.height;
 	perf->clk_rate *= config->frame_rate;
 	/* rotator processes 4 pixels per clock */
 	perf->clk_rate /= 4;
@@ -2668,7 +2670,7 @@ static int mdss_rotator_get_dt_vreg_data(struct device *dev,
 	struct device_node *of_node = NULL;
 	int dt_vreg_total = 0;
 	int i;
-	int rc = 0;
+	int rc;
 
 	if (!dev || !mp) {
 		DEV_ERR("%s: invalid input\n", __func__);

@@ -1,11 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2015 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- *
- * Adaptation for somc_panel on Open Devices
- * Copyright (C) 2018, AngeloGioacchino Del Regno <kholk11@gmail.com>
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -130,17 +123,13 @@ struct adv7533 {
 	struct pinctrl *ts_pinctrl;
 	struct pinctrl_state *pinctrl_state_active;
 	struct pinctrl_state *pinctrl_state_suspend;
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	struct pinctrl_state *pinctrl_mipi_active;
-	struct pinctrl_state *pinctrl_mipi_suspend;
-	int pin_ctrl_en;
-#endif
 	bool audio;
 	bool disable_gpios;
 	struct dss_module_power power_data;
 	bool hdcp_enabled;
 	bool cec_enabled;
 	bool is_power_on;
+	bool is_vreg_on;
 	void *edid_data;
 	u8 edid_buf[EDID_SEG_SIZE];
 	u8 audio_spkr_data[AUDIO_DATA_SIZE];
@@ -198,6 +187,17 @@ static struct adv7533_reg_cfg adv7533_video_en[] = {
 	{I2C_ADDR_CEC_DSI, 0x05, 0xC8, 0},
 	/* GC packet enable */
 	{I2C_ADDR_MAIN, 0x40, 0x80, 0},
+};
+
+static struct adv7533_reg_cfg adv7533_video_disable[] = {
+	/* Timing Generator Disable */
+	{I2C_ADDR_CEC_DSI, 0x27, 0x0B, 0},
+	/* SPDIF disable */
+	{I2C_ADDR_MAIN, 0x0B, 0x00, 0},
+	/* Gate CEC Clock */
+	{I2C_ADDR_CEC_DSI, 0x05, 0xF8, 0},
+	/* power down */
+	{I2C_ADDR_MAIN, 0x41, 0x50, 0},
 };
 
 static struct adv7533_reg_cfg adv7533_cec_en[] = {
@@ -270,84 +270,6 @@ static struct adv7533_reg_cfg I2S_cfg[] = {
 	{I2C_ADDR_MAIN, 0x14, 0x02, 0},	/* Word Length = 16Bits*/
 	{I2C_ADDR_MAIN, 0x73, 0x01, 0},	/* Channel Count = 2 channels */
 };
-
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-enum {
-	PIN_CTRL_OFF = 0,
-	PIN_CTRL_ON,
-	PIN_CTRL_INIT,
-};
-
-static struct adv7533_reg_cfg adv7533_int_disable[] = {
-	{I2C_ADDR_MAIN, 0x92, 0x00},
-	{I2C_ADDR_MAIN, 0x93, 0x00},
-	{I2C_ADDR_MAIN, 0x94, 0x00},
-	{I2C_ADDR_MAIN, 0x95, 0x00},
-	{I2C_ADDR_MAIN, 0x96, 0x00},
-	{I2C_ADDR_MAIN, 0x97, 0x00},
-};
-
-static int adv7533_start(struct adv7533 *pdata);
-
-static ssize_t adv7533_power_store(struct device *dev,
-			struct device_attribute *attr,
-			const char *buf, size_t len)
-{
-	struct msm_dba_device_info *info = dev_get_drvdata(dev);
-	struct adv7533 *pdata = container_of(info, struct adv7533, dev_info);
-	int ret = -EINVAL;
-	int value;
-
-	if (kstrtoint(buf, 10, &value)) {
-		pr_err("%s: invalid argument\n", __func__);
-		return -EINVAL;
-	}
-
-	pr_debug("%s: value=%d, pin_ctrl_en=%d\n",
-		__func__, value, pdata->pin_ctrl_en);
-
-	if (!value && pdata->pin_ctrl_en == PIN_CTRL_INIT) {
-		if (!IS_ERR_OR_NULL(pdata->ts_pinctrl)) {
-			pr_debug("%s: pinctrl suspend\n", __func__);
-			ret = pinctrl_select_state(pdata->ts_pinctrl,
-				pdata->pinctrl_state_suspend);
-			if (ret < 0)
-				pr_err("%s: Failed to select %s pinstate %d\n",
-					__func__, "mipi_hdmi_suspend", ret);
-		}
-		pdata->pin_ctrl_en = PIN_CTRL_OFF;
-	}
-
-	if (value && pdata->pin_ctrl_en != PIN_CTRL_ON) {
-		if (!IS_ERR_OR_NULL(pdata->ts_pinctrl)) {
-			pr_debug("%s: pinctrl active\n", __func__);
-			ret = pinctrl_select_state(pdata->ts_pinctrl,
-				pdata->pinctrl_mipi_active);
-			if (ret < 0)
-				pr_err("%s: Failed to select %s pinstate %d\n",
-					__func__, "mipi_hdmi_active", ret);
-		}
-		pr_debug("%s: adv7533_start\n", __func__);
-		adv7533_start(pdata);
-		pdata->pin_ctrl_en = PIN_CTRL_ON;
-	}
-
-	return strnlen(buf, PAGE_SIZE);
-}
-
-static struct device_attribute dev_attr_power_on =
-	__ATTR(power_on, S_IWUSR, NULL, adv7533_power_store);
-
-static struct attribute *adv7533_attrs[] = {
-	&dev_attr_power_on.attr,
-	NULL,
-};
-
-static struct attribute_group adv7533_attr_group = {
-	.name = NULL,
-	.attrs = adv7533_attrs,
-};
-#endif
 
 static int adv7533_write(struct adv7533 *pdata, u8 offset, u8 reg, u8 val)
 {
@@ -642,60 +564,6 @@ end:
 		devm_kfree(dev, val_array);
 }
 
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-static void adv7533_parse_pinctrl_somc_extn(struct adv7533 *pdata)
-{
-	int ret = 0;
-
-	if (IS_ERR_OR_NULL(pdata->ts_pinctrl)) {
-		ret = -EINVAL;
-		goto end;
-	}
-
-	pdata->pinctrl_state_active =
-		pinctrl_lookup_state(pdata->ts_pinctrl,
-			"pmx_adv7533_active");
-	if (IS_ERR_OR_NULL(pdata->pinctrl_state_active)) {
-		ret = PTR_ERR(pdata->pinctrl_state_active);
-		pr_err("Can not lookup %s pinstate %d\n",
-			PINCTRL_STATE_ACTIVE, ret);
-		goto end;
-	}
-
-	pdata->pinctrl_state_suspend =
-		pinctrl_lookup_state(pdata->ts_pinctrl,
-			"pmx_adv7533_suspend");
-	if (IS_ERR_OR_NULL(pdata->pinctrl_state_suspend)) {
-		ret = PTR_ERR(pdata->pinctrl_state_suspend);
-		pr_err("Can not lookup %s pinstate %d\n",
-			PINCTRL_STATE_SUSPEND, ret);
-		goto end;
-	}
-
-	pdata->pinctrl_mipi_active =
-		pinctrl_lookup_state(pdata->ts_pinctrl,
-				"mipi_hdmi_active");
-	if (IS_ERR_OR_NULL(pdata->pinctrl_mipi_active)) {
-		ret = PTR_ERR(pdata->pinctrl_mipi_active);
-		pr_err("Can not lookup %s pinstate %d\n",
-			"mipi_hdmi_active", ret);
-		goto end;
-	}
-
-	pdata->pinctrl_mipi_suspend =
-		pinctrl_lookup_state(pdata->ts_pinctrl,
-				"mipi_hdmi_suspend");
-	if (IS_ERR_OR_NULL(pdata->pinctrl_mipi_suspend)) {
-		ret = PTR_ERR(pdata->pinctrl_mipi_suspend);
-		pr_err("Can not lookup %s pinstate %d\n",
-			"mipi_hdmi_suspend", ret);
-	}
-end:
-	pdata->pin_ctrl_en = PIN_CTRL_INIT;
-	pr_debug("%s: pin_ctrl_en=%d\n", __func__, pdata->pin_ctrl_en);
-}
-#endif
-
 static int adv7533_parse_dt(struct device *dev,
 	struct adv7533 *pdata)
 {
@@ -743,9 +611,6 @@ static int adv7533_parse_dt(struct device *dev,
 			__func__, ret);
 	}
 
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	adv7533_parse_pinctrl_somc_extn(pdata);
-#else
 	pdata->pinctrl_state_active = pinctrl_lookup_state(pdata->ts_pinctrl,
 		"pmx_adv7533_active");
 	if (IS_ERR_OR_NULL(pdata->pinctrl_state_active)) {
@@ -761,7 +626,7 @@ static int adv7533_parse_dt(struct device *dev,
 		pr_err("Can not lookup %s pinstate %d\n",
 			PINCTRL_STATE_SUSPEND, ret);
 	}
-#endif
+
 	pdata->disable_gpios = of_property_read_bool(np,
 			"adi,disable-gpios");
 
@@ -796,14 +661,12 @@ static int adv7533_gpio_configure(struct adv7533 *pdata, bool on)
 					__LINE__, pdata->irq_gpio, ret);
 				goto err_none;
 			}
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
 			ret = gpio_direction_input(pdata->irq_gpio);
 			if (ret) {
 				pr_err("unable to set dir for gpio[%d]\n",
 					pdata->irq_gpio);
 				goto err_irq_gpio;
 			}
-#endif
 		} else {
 			pr_err("irq gpio not provided\n");
 			goto err_none;
@@ -817,14 +680,12 @@ static int adv7533_gpio_configure(struct adv7533 *pdata, bool on)
 					pdata->hpd_irq_gpio);
 				goto err_irq_gpio;
 			}
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
 			ret = gpio_direction_input(pdata->hpd_irq_gpio);
 			if (ret) {
 				pr_err("unable to set dir for gpio[%d]\n",
 					pdata->hpd_irq_gpio);
 				goto err_hpd_irq_gpio;
 			}
-#endif
 		} else {
 			pr_warn("hpd irq gpio not provided\n");
 		}
@@ -837,7 +698,7 @@ static int adv7533_gpio_configure(struct adv7533 *pdata, bool on)
 					__LINE__, pdata->irq_gpio, ret);
 				goto err_hpd_irq_gpio;
 			}
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
+
 			ret = gpio_direction_output(pdata->switch_gpio, 0);
 			if (ret) {
 				pr_err("unable to set dir for gpio [%d]\n",
@@ -848,7 +709,6 @@ static int adv7533_gpio_configure(struct adv7533 *pdata, bool on)
 			gpio_set_value(pdata->switch_gpio,
 				!pdata->switch_flags);
 			msleep(ADV7533_RESET_DELAY);
-#endif
 		}
 
 		return 0;
@@ -863,11 +723,9 @@ static int adv7533_gpio_configure(struct adv7533 *pdata, bool on)
 		return 0;
 	}
 
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
 err_switch_gpio:
 	if (gpio_is_valid(pdata->switch_gpio))
 		gpio_free(pdata->switch_gpio);
-#endif
 err_hpd_irq_gpio:
 	if (gpio_is_valid(pdata->hpd_irq_gpio))
 		gpio_free(pdata->hpd_irq_gpio);
@@ -903,7 +761,7 @@ static void adv7533_notify_clients(struct msm_dba_device_info *dev,
 u32 adv7533_read_edid(struct adv7533 *pdata, u32 size, char *edid_buf)
 {
 	u32 ret = 0, read_size = size / 2;
-	u8 edid_addr;
+	u8 edid_addr = 0;
 	int ndx;
 
 	if (!pdata || !edid_buf)
@@ -1027,9 +885,13 @@ static void adv7533_handle_hdcp_intr(struct adv7533 *pdata, u8 hdcp_status)
 			break;
 		case 4:
 			pr_err("%s: DDC: I2C ERROR\n", __func__);
+			adv7533_notify_clients(&pdata->dev_info,
+					MSM_DBA_CB_DDC_I2C_ERROR);
 			break;
 		case 5:
 			pr_err("%s: DDC: TIMED OUT DS DONE\n", __func__);
+			adv7533_notify_clients(&pdata->dev_info,
+					MSM_DBA_CB_DDC_TIMEOUT);
 			break;
 		case 6:
 			pr_err("%s: DDC: MAX CAS EXC\n", __func__);
@@ -1150,7 +1012,7 @@ end:
 static void *adv7533_handle_hpd_intr(struct adv7533 *pdata)
 {
 	int ret = 0;
-	u8 hpd_state;
+	u8 hpd_state = 0;
 	u8 connected = 0, disconnected = 0;
 
 	if (!pdata) {
@@ -1182,8 +1044,8 @@ end:
 static int adv7533_enable_interrupts(struct adv7533 *pdata, int interrupts)
 {
 	int ret = 0;
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	u8 reg_val, init_reg_val;
+	u8 reg_val = 0;
+	u8 init_reg_val;
 
 	if (!pdata) {
 		pr_err("%s: invalid input\n", __func__);
@@ -1223,15 +1085,14 @@ static int adv7533_enable_interrupts(struct adv7533 *pdata, int interrupts)
 		adv7533_write(pdata, I2C_ADDR_MAIN, 0x95, reg_val);
 	}
 end:
-#endif /* !CONFIG_MSM_DBA_ADV7533_SOMC_EXTN */
 	return ret;
 }
 
 static int adv7533_disable_interrupts(struct adv7533 *pdata, int interrupts)
 {
 	int ret = 0;
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	u8 reg_val, init_reg_val;
+	u8 reg_val = 0;
+	u8 init_reg_val;
 
 	if (!pdata) {
 		pr_err("%s: invalid input\n", __func__);
@@ -1271,7 +1132,6 @@ static int adv7533_disable_interrupts(struct adv7533 *pdata, int interrupts)
 		adv7533_write(pdata, I2C_ADDR_MAIN, 0x95, reg_val);
 	}
 end:
-#endif /* !CONFIG_MSM_DBA_ADV7533_SOMC_EXTN */
 	return ret;
 }
 
@@ -1389,9 +1249,6 @@ static irqreturn_t adv7533_irq(int irq, void *data)
 
 static struct i2c_device_id adv7533_id[] = {
 	{ "adv7533", 0},
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	{ "adv7535", 0},
-#endif
 	{}
 };
 
@@ -1493,9 +1350,7 @@ static int adv7533_check_hpd(void *client, u32 flags)
 {
 	struct adv7533 *pdata = adv7533_get_platform_data(client);
 	u8 reg_val = 0;
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
 	u8 intr_status;
-#endif
 	int connected = 0;
 
 	if (!pdata) {
@@ -1514,18 +1369,96 @@ static int adv7533_check_hpd(void *client, u32 flags)
 	connected  = (reg_val & BIT(6));
 	if (connected) {
 		pr_debug("%s: cable is connected\n", __func__);
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
 		/* Clear the interrupts before initiating EDID read */
 		adv7533_read(pdata, I2C_ADDR_MAIN, 0x96, &intr_status, 1);
 		adv7533_write(pdata, I2C_ADDR_MAIN, 0x96, intr_status);
 		adv7533_enable_interrupts(pdata, (CFG_EDID_INTERRUPTS |
 				CFG_HPD_INTERRUPTS));
-#endif
+
 		adv7533_edid_read_init(pdata);
 	}
 	mutex_unlock(&pdata->ops_mutex);
 
 	return connected;
+}
+
+static int adv7533_enable_vreg(struct adv7533 *pdata, int enable)
+{
+	int rc = 0;
+	struct dss_module_power *power_data = NULL;
+
+	if (!pdata) {
+		pr_err("invalid input\n");
+		rc = -EINVAL;
+		goto exit;
+	}
+
+	power_data = &pdata->power_data;
+	if (!power_data || !power_data->num_vreg) {
+		pr_warn("%s: Error: invalid power data\n", __func__);
+		return 0;
+	}
+
+	if (enable) {
+		rc = msm_dss_enable_vreg(power_data->vreg_config,
+					power_data->num_vreg, 1);
+		if (rc) {
+			pr_err("%s: Failed to enable vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+		pdata->is_vreg_on = true;
+	} else {
+		rc = msm_dss_enable_vreg(power_data->vreg_config,
+					power_data->num_vreg, 0);
+		if (rc) {
+			pr_err("%s: Failed to disable vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+		pdata->is_vreg_on = false;
+	}
+exit:
+	return rc;
+}
+
+static int adv7533_config_vreg(struct adv7533 *pdata, int enable)
+{
+	int rc = 0;
+	struct dss_module_power *power_data = NULL;
+
+	if (!pdata) {
+		pr_err("invalid input\n");
+		rc = -EINVAL;
+		goto exit;
+	}
+	power_data = &pdata->power_data;
+	if (!power_data || !power_data->num_vreg) {
+		pr_warn("%s: Error: invalid power data\n", __func__);
+		return 0;
+	}
+
+	if (enable) {
+		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
+					power_data->vreg_config,
+					power_data->num_vreg, 1);
+		if (rc) {
+			pr_err("%s: Failed to config vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+	} else {
+		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
+					power_data->vreg_config,
+					power_data->num_vreg, 0);
+		if (rc) {
+			pr_err("%s: Failed to deconfig vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+	}
+exit:
+	return rc;
 }
 
 /* Device Operations */
@@ -1543,6 +1476,22 @@ static int adv7533_power_on(void *client, bool on, u32 flags)
 	mutex_lock(&pdata->ops_mutex);
 
 	if (on && !pdata->is_power_on) {
+		if (!pdata->is_vreg_on) {
+			ret = adv7533_config_vreg(pdata, 1);
+			if (!ret) {
+				adv7533_enable_vreg(pdata, 1);
+			} else {
+				pr_err("%s: Failed to config vreg\n", __func__);
+				goto end;
+			}
+		}
+
+		if (gpio_is_valid(pdata->switch_gpio)) {
+			gpio_set_value(pdata->switch_gpio,
+				pdata->switch_flags);
+			msleep(ADV7533_RESET_DELAY);
+		}
+
 		adv7533_write_array(pdata, adv7533_init_setup,
 					sizeof(adv7533_init_setup));
 
@@ -1558,8 +1507,18 @@ static int adv7533_power_on(void *client, bool on, u32 flags)
 		adv7533_write(pdata, I2C_ADDR_MAIN, 0x41, 0x50);
 		pdata->is_power_on = false;
 
+		if (gpio_is_valid(pdata->switch_gpio)) {
+			gpio_set_value(pdata->switch_gpio,
+				!pdata->switch_flags);
+			msleep(ADV7533_RESET_DELAY);
+		}
+		ret = 0;
 		adv7533_notify_clients(&pdata->dev_info,
 			MSM_DBA_CB_HPD_DISCONNECT);
+		if (pdata->is_vreg_on) {
+			adv7533_enable_vreg(pdata, 0);
+			adv7533_config_vreg(pdata, 0);
+		}
 	}
 end:
 	mutex_unlock(&pdata->ops_mutex);
@@ -1571,6 +1530,7 @@ static void adv7533_video_setup(struct adv7533 *pdata,
 {
 	u32 h_total, hpw, hfp, hbp;
 	u32 v_total, vpw, vfp, vbp;
+	int dsi_pixel_clock_divider = 0x00;
 
 	if (!pdata || !cfg) {
 		pr_err("%s: invalid input\n", __func__);
@@ -1598,6 +1558,26 @@ static void adv7533_video_setup(struct adv7533 *pdata,
 		v_total, cfg->v_active, cfg->v_front_porch,
 		cfg->v_pulse_width, cfg->v_back_porch);
 
+	/* 0x16: dsi pclk divider control.
+	 * bit2: 1 = manual dsi pclk divider control; 0 = automatic dsi
+	 *   pclk divider generation.
+	 * bit3-7: the signal sets the dsi pclk divider setting when bit2
+	 *   is enable.
+	 *
+	 * If bit2=0 means automatically select dsi pclk divider, so
+	 * other bits(divider factor) has no impact.
+	 *
+	 * If bit2=1, the divider factor should be related to lane num below
+	 * 4lanes : divide by 3; 3lanes : divide by 4; 2lanes : divide by 6
+	 * So the value of 0x16 can be set as follow:
+	 * 4 lanes : 0x1C(00011 100)
+	 * 3 lanes : 0x24(00100 100)
+	 * 2 lanes : 0x34(00110 100)
+	 *
+	 * Here, use automatic dsi pclk divider generation, so set 0x00
+	 * to cec 0x16 register for all lanes numbers.
+	 */
+	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x16, dsi_pixel_clock_divider);
 
 	/* h_width */
 	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x28, ((h_total & 0xFF0) >> 4));
@@ -1632,86 +1612,6 @@ static void adv7533_video_setup(struct adv7533 *pdata,
 	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x37, ((vbp & 0xF) << 4));
 }
 
-static int adv7533_config_vreg(struct adv7533 *pdata, int enable)
-{
-	int rc = 0;
-	struct dss_module_power *power_data = NULL;
-
-	if (!pdata) {
-		pr_err("invalid input\n");
-		rc = -EINVAL;
-		goto exit;
-	}
-
-	power_data = &pdata->power_data;
-	if (!power_data || !power_data->num_vreg) {
-		pr_warn("%s: Error: invalid power data\n", __func__);
-		return 0;
-	}
-
-	if (enable) {
-		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
-					power_data->vreg_config,
-					power_data->num_vreg, 1);
-		if (rc) {
-			pr_err("%s: Failed to config vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-	} else {
-		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
-					power_data->vreg_config,
-					power_data->num_vreg, 0);
-		if (rc) {
-			pr_err("%s: Failed to deconfig vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-	}
-exit:
-	return rc;
-
-}
-
-static int adv7533_enable_vreg(struct adv7533 *pdata, int enable)
-{
-	int rc = 0;
-	struct dss_module_power *power_data = NULL;
-
-	if (!pdata) {
-		pr_err("invalid input\n");
-		rc = -EINVAL;
-		goto exit;
-	}
-
-	power_data = &pdata->power_data;
-	if (!power_data || !power_data->num_vreg) {
-		pr_warn("%s: Error: invalid power data\n", __func__);
-		return 0;
-	}
-
-	if (enable) {
-		rc = msm_dss_enable_vreg(power_data->vreg_config,
-					power_data->num_vreg, 1);
-		if (rc) {
-			pr_err("%s: Failed to enable vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-	} else {
-		rc = msm_dss_enable_vreg(power_data->vreg_config,
-					power_data->num_vreg, 0);
-		if (rc) {
-			pr_err("%s: Failed to disable vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-	}
-exit:
-	return rc;
-
-}
-
 static int adv7533_video_on(void *client, bool on,
 	struct msm_dba_video_cfg *cfg, u32 flags)
 {
@@ -1720,48 +1620,56 @@ static int adv7533_video_on(void *client, bool on,
 	u8 reg_val = 0;
 	struct adv7533 *pdata = adv7533_get_platform_data(client);
 
-	if (!pdata || !cfg) {
+	if (!pdata) {
 		pr_err("%s: invalid platform data\n", __func__);
+		return -EINVAL;
+	} else if (on && !cfg) {
+		pr_err("%s: invalid cfg data for power on\n", __func__);
 		return -EINVAL;
 	}
 
 	mutex_lock(&pdata->ops_mutex);
 
-	/* DSI lane configuration */
-	lanes = (cfg->num_of_input_lanes << 4);
-	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x1C, lanes);
+	if (on) {
+		/* DSI lane configuration */
+		lanes = (cfg->num_of_input_lanes << 4);
+		adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x1C, lanes);
 
-	adv7533_video_setup(pdata, cfg);
+		adv7533_video_setup(pdata, cfg);
 
-	/* hdmi/dvi mode */
-	if (cfg->hdmi_mode)
-		adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x06);
-	else
-		adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x04);
+		/* hdmi/dvi mode */
+		if (cfg->hdmi_mode)
+			adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x06);
+		else
+			adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x04);
 
-	/* set scan info for AVI Infoframe*/
-	if (cfg->scaninfo) {
-		adv7533_read(pdata, I2C_ADDR_MAIN, 0x55, &reg_val, 1);
-		reg_val |= cfg->scaninfo & (BIT(1) | BIT(0));
-		adv7533_write(pdata, I2C_ADDR_MAIN, 0x55, reg_val);
-	}
+		/* set scan info for AVI Infoframe*/
+		if (cfg->scaninfo) {
+			adv7533_read(pdata, I2C_ADDR_MAIN, 0x55, &reg_val, 1);
+			reg_val |= cfg->scaninfo & (BIT(1) | BIT(0));
+			adv7533_write(pdata, I2C_ADDR_MAIN, 0x55, reg_val);
+		}
 
-	/*
-	 * aspect ratio and sync polarity set up.
-	 * Currently adv only supports 16:9 or 4:3 aspect ratio
-	 * configuration.
-	 */
-	if (cfg->h_active * 3 - cfg->v_active * 4) {
-		adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x02);
-		adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x28);
+		/*
+		 * aspect ratio and sync polarity set up.
+		 * Currently adv only supports 16:9 or 4:3 aspect ratio
+		 * configuration.
+		 */
+		if (cfg->h_active * 3 - cfg->v_active * 4) {
+			adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x02);
+			adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x28);
+		} else {
+			/* 4:3 aspect ratio */
+			adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x00);
+			adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x18);
+		}
+
+		adv7533_write_array(pdata, adv7533_video_en,
+					sizeof(adv7533_video_en));
 	} else {
-		/* 4:3 aspect ratio */
-		adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x00);
-		adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x18);
+		adv7533_write_array(pdata, adv7533_video_disable,
+				sizeof(adv7533_video_disable));
 	}
-
-	adv7533_write_array(pdata, adv7533_video_en,
-				sizeof(adv7533_video_en));
 
 	mutex_unlock(&pdata->ops_mutex);
 	return ret;
@@ -1771,7 +1679,7 @@ static int adv7533_hdcp_enable(void *client, bool hdcp_on,
 	bool enc_on, u32 flags)
 {
 	int ret = -EINVAL;
-	u8 reg_val;
+	u8 reg_val = 0;
 	struct adv7533 *pdata =
 		adv7533_get_platform_data(client);
 
@@ -2076,12 +1984,7 @@ end:
 	return ret;
 }
 
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-static int adv7533_register_dba(struct adv7533 *pdata,
-		const struct i2c_device_id *devid)
-#else
 static int adv7533_register_dba(struct adv7533 *pdata)
-#endif
 {
 	struct msm_dba_ops *client_ops;
 	struct msm_dba_device_ops *dev_ops;
@@ -2109,13 +2012,8 @@ static int adv7533_register_dba(struct adv7533 *pdata)
 	dev_ops->read_reg = adv7533_read_reg;
 	dev_ops->dump_debug_info = adv7533_dump_debug_info;
 
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	strlcpy(pdata->dev_info.chip_name, devid->name,
-		sizeof(pdata->dev_info.chip_name));
-#else
 	strlcpy(pdata->dev_info.chip_name, "adv7533",
 		sizeof(pdata->dev_info.chip_name));
-#endif
 
 	mutex_init(&pdata->dev_info.dev_mutex);
 
@@ -2132,133 +2030,6 @@ static void adv7533_unregister_dba(struct adv7533 *pdata)
 	msm_dba_remove_probed_device(&pdata->dev_info);
 }
 
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-static int adv7533_gpio_start(struct adv7533 *pdata)
-{
-	int ret = 0;
-
-	pr_debug("%s\n", __func__);
-	if (pdata->disable_gpios)
-		return 0;
-
-	if (gpio_is_valid(pdata->irq_gpio)) {
-		ret = gpio_direction_input(pdata->irq_gpio);
-		if (ret) {
-			pr_err("unable to set dir for gpio[%d]\n",
-				pdata->irq_gpio);
-			goto err_irq_gpio;
-		}
-	} else {
-		pr_err("irq gpio not provided\n");
-	}
-
-	if (gpio_is_valid(pdata->hpd_irq_gpio)) {
-		ret = gpio_direction_input(pdata->hpd_irq_gpio);
-		if (ret) {
-			pr_err("unable to set dir for gpio[%d]\n",
-				pdata->hpd_irq_gpio);
-			goto err_hpd_irq_gpio;
-		}
-	} else {
-		pr_err("hpd irq gpio not provided\n");
-	}
-
-	if (gpio_is_valid(pdata->switch_gpio)) {
-		ret = gpio_direction_output(pdata->switch_gpio, 1);
-		if (ret) {
-			pr_err("unable to set dir for gpio [%d]\n",
-				pdata->switch_gpio);
-			goto err_switch_gpio;
-		}
-
-		gpio_set_value(pdata->switch_gpio, 1);
-		msleep(ADV7533_RESET_DELAY);
-	} else{
-		pr_err("switch gpio not provided\n");
-	}
-
-	return 0;
-
-err_switch_gpio:
-	if (gpio_is_valid(pdata->switch_gpio))
-		gpio_free(pdata->switch_gpio);
-err_hpd_irq_gpio:
-	if (gpio_is_valid(pdata->hpd_irq_gpio))
-		gpio_free(pdata->hpd_irq_gpio);
-err_irq_gpio:
-	if (gpio_is_valid(pdata->irq_gpio))
-		gpio_free(pdata->irq_gpio);
-	return ret;
-}
-
-static int adv7533_start(struct adv7533 *pdata)
-{
-	struct i2c_client *client = pdata->i2c_client;
-	int ret = 0;
-	u8 dsi_input = 0;
-
-	pr_debug("%s\n", __func__);
-
-	ret = adv7533_gpio_start(pdata);
-	if (ret) {
-		pr_err("%s: Failed to start GPIOs\n", __func__);
-		goto err_gpio_cfg;
-	}
-
-	if (gpio_is_valid(pdata->switch_gpio))
-		gpio_set_value(pdata->switch_gpio, 0);
-
-	pdata->irq = gpio_to_irq(pdata->irq_gpio);
-
-	ret = request_threaded_irq(pdata->irq, NULL, adv7533_irq,
-		IRQF_TRIGGER_FALLING | IRQF_ONESHOT | IRQF_SHARED,
-		"adv7535", pdata);
-	if (ret) {
-		pr_err("%s: Failed to enable ADV7535 interrupt\n",
-			__func__);
-		goto err_irq;
-	}
-
-	pdata->workq = create_workqueue("adv7533_workq");
-	if (!pdata->workq) {
-		pr_err("%s: workqueue creation failed.\n", __func__);
-		ret = -EPERM;
-		goto err_workqueue;
-	}
-
-	if (pdata->audio) {
-		pr_debug("%s: enabling default audio configs\n", __func__);
-
-		if (adv7533_write_array(pdata, I2S_cfg, sizeof(I2S_cfg)))
-			pr_err("%s: Cannot enable default audio configs\n",
-				__func__);
-	}
-
-	INIT_DELAYED_WORK(&pdata->adv7533_intr_work_id, adv7533_intr_work);
-
-	pm_runtime_enable(&client->dev);
-	pm_runtime_set_active(&client->dev);
-	adv7533_write_array(pdata, adv7533_int_disable,
-				sizeof(adv7533_int_disable));
-	adv7533_read(pdata, I2C_ADDR_CEC_DSI, 0x38, &dsi_input, 1);
-	dsi_input &= 0x8f;
-	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x38, dsi_input);
-
-	pr_info("%s:success\n", __func__);
-	return 0;
-
-err_workqueue:
-	msm_dba_helper_sysfs_remove(&client->dev);
-	disable_irq(pdata->irq);
-	free_irq(pdata->irq, pdata);
-err_irq:
-	adv7533_gpio_configure(pdata, false);
-err_gpio_cfg:
-	adv7533_unregister_dba(pdata);
-	devm_kfree(&client->dev, pdata);
-	return ret;
-}
-#endif
 
 static int adv7533_probe(struct i2c_client *client,
 	 const struct i2c_device_id *id)
@@ -2305,35 +2076,18 @@ static int adv7533_probe(struct i2c_client *client,
 		goto err_i2c_prog;
 	}
 
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	ret = adv7533_register_dba(pdata, id);
-#else
 	ret = adv7533_register_dba(pdata);
-#endif
 	if (ret) {
 		pr_err("%s: Error registering with DBA %d\n",
 			__func__, ret);
 		goto err_dba_reg;
 	}
 
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	if (!IS_ERR_OR_NULL(pdata->ts_pinctrl))
-#endif
-	{
-		ret = pinctrl_select_state(pdata->ts_pinctrl,
-			pdata->pinctrl_state_active);
-		if (ret < 0)
-			pr_err("%s: Failed to select %s pinstate %d\n",
-				__func__, PINCTRL_STATE_ACTIVE, ret);
-	}
-
-#ifdef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
-	ret = sysfs_create_group(&client->dev.kobj, &adv7533_attr_group);
-	if (ret) {
-		pr_err("%s:sysfs_create_group ret = %d\n", __func__, ret);
-		goto err_gpio_cfg;
-	}
-#endif
+	ret = pinctrl_select_state(pdata->ts_pinctrl,
+		pdata->pinctrl_state_active);
+	if (ret < 0)
+		pr_err("%s: Failed to select %s pinstate %d\n",
+			__func__, PINCTRL_STATE_ACTIVE, ret);
 
 	ret = adv7533_gpio_configure(pdata, true);
 	if (ret) {
@@ -2341,7 +2095,6 @@ static int adv7533_probe(struct i2c_client *client,
 		goto err_gpio_cfg;
 	}
 
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
 	if (gpio_is_valid(pdata->switch_gpio))
 		gpio_set_value(pdata->switch_gpio, pdata->switch_flags);
 
@@ -2354,7 +2107,6 @@ static int adv7533_probe(struct i2c_client *client,
 			__func__);
 		goto err_irq;
 	}
-#endif
 
 	dev_set_drvdata(&client->dev, &pdata->dev_info);
 	ret = msm_dba_helper_sysfs_init(&client->dev);
@@ -2363,8 +2115,6 @@ static int adv7533_probe(struct i2c_client *client,
 		goto err_dba_helper;
 	}
 
-/* ToDo: This is a nasty and messy ifdef!!! */
-#ifndef CONFIG_MSM_DBA_ADV7533_SOMC_EXTN
 	pdata->workq = create_workqueue("adv7533_workq");
 	if (!pdata->workq) {
 		pr_err("%s: workqueue creation failed.\n", __func__);
@@ -2394,11 +2144,6 @@ err_dba_helper:
 	free_irq(pdata->irq, pdata);
 err_irq:
 	adv7533_gpio_configure(pdata, false);
-#else
-	return 0;
-err_dba_helper:
-#endif /* !CONFIG_MSM_DBA_ADV7533_SOMC_EXTN */
-
 err_gpio_cfg:
 	adv7533_unregister_dba(pdata);
 err_dba_reg:
@@ -2444,7 +2189,7 @@ end:
 
 static struct i2c_driver adv7533_driver = {
 	.driver = {
-		.name = "adv7535",
+		.name = "adv7533",
 		.owner = THIS_MODULE,
 	},
 	.probe = adv7533_probe,

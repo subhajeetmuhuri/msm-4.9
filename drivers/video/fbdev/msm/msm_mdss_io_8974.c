@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -791,19 +791,14 @@ static void mdss_dsi_20nm_phy_regulator_enable(struct mdss_dsi_ctrl_pdata
 	phy_io_base = ctrl_pdata->phy_regulator_io.base;
 
 	if (pd->regulator_len != 7) {
-		pr_err("%s: wrong regulator settings (len = %d) but going on\n", __func__, pd->regulator_len);
-	//	return;
+		pr_err("%s: wrong regulator settings\n", __func__);
+		return;
 	}
 
 	if (pd->reg_ldo_mode) {
 		MIPI_OUTP(ctrl_pdata->phy_io.base + MDSS_DSI_DSIPHY_LDO_CNTRL,
 			0x1d);
 	} else {
-#ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
-		/* Regulator ctrl - TEST */
-		MIPI_OUTP(phy_io_base + MDSS_DSI_DSIPHY_REGULATOR_TEST,
-			pd->regulator[5]);
-#endif
 		MIPI_OUTP(phy_io_base + MDSS_DSI_DSIPHY_REGULATOR_CTRL_1,
 			pd->regulator[1]);
 		MIPI_OUTP(phy_io_base + MDSS_DSI_DSIPHY_REGULATOR_CTRL_2,
@@ -857,8 +852,8 @@ static void mdss_dsi_20nm_phy_config(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 	}
 
 	if (pd->lanecfg_len != 45) {
-		pr_err("%s: wrong lane cfg but going on\n", __func__);
-		//return;
+		pr_err("%s: wrong lane cfg\n", __func__);
+		return;
 	}
 
 	/* 4 lanes + clk lane configuration */
@@ -1305,8 +1300,6 @@ static void mdss_dsi_phy_regulator_ctrl(struct mdss_dsi_ctrl_pdata *ctrl,
 {
 	struct mdss_dsi_ctrl_pdata *other_ctrl;
 	struct dsi_shared_data *sdata;
-	struct mdss_panel_data *pdata;
-	struct mdss_panel_info *pinfo;
 
 	if (!ctrl) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -1315,8 +1308,6 @@ static void mdss_dsi_phy_regulator_ctrl(struct mdss_dsi_ctrl_pdata *ctrl,
 
 	sdata = ctrl->shared_data;
 	other_ctrl = mdss_dsi_get_other_ctrl(ctrl);
-	pdata = &ctrl->panel_data;
-	pinfo = &pdata->panel_info;
 
 	mutex_lock(&sdata->phy_reg_lock);
 	if (enable) {
@@ -1330,17 +1321,15 @@ static void mdss_dsi_phy_regulator_ctrl(struct mdss_dsi_ctrl_pdata *ctrl,
 				mdss_dsi_20nm_phy_regulator_enable(ctrl);
 				break;
 			default:
-				/*
-				 * For dual dsi case, do not reconfigure dsi phy
-				 * regulator if the other dsi controller is still
-				 * active.
-				 */
-				if (!mdss_dsi_is_hw_config_dual(sdata) ||
-					(mdss_dsi_is_ctrl_clk_master(ctrl) &&
-						pinfo->ulps_suspend_enabled) ||
-					(other_ctrl && (!other_ctrl->is_phyreg_enabled
-							|| other_ctrl->mmss_clamp)))
-					mdss_dsi_28nm_phy_regulator_enable(ctrl);
+			/*
+			 * For dual dsi case, do not reconfigure dsi phy
+			 * regulator if the other dsi controller is still
+			 * active.
+			 */
+			if (!mdss_dsi_is_hw_config_dual(sdata) ||
+				(other_ctrl && (!other_ctrl->is_phyreg_enabled
+						|| other_ctrl->mmss_clamp)))
+				mdss_dsi_28nm_phy_regulator_enable(ctrl);
 				break;
 			}
 		}
@@ -1472,10 +1461,6 @@ void mdss_dsi_core_clk_deinit(struct device *dev, struct dsi_shared_data *sdata)
 		devm_clk_put(dev, sdata->mnoc_clk);
 	if (sdata->mdp_core_clk)
 		devm_clk_put(dev, sdata->mdp_core_clk);
-	if (sdata->tbu_clk)
-		devm_clk_put(dev, sdata->tbu_clk);
-	if (sdata->tbu_rt_clk)
-		devm_clk_put(dev, sdata->tbu_rt_clk);
 }
 
 int mdss_dsi_clk_refresh(struct mdss_panel_data *pdata, bool update_phy)
@@ -1504,13 +1489,19 @@ int mdss_dsi_clk_refresh(struct mdss_panel_data *pdata, bool update_phy)
 				__func__, pinfo->mipi.frame_rate);
 	}
 
-	rc = mdss_dsi_clk_div_config(&pdata->panel_info,
-			pdata->panel_info.mipi.frame_rate);
-	if (rc) {
-		pr_err("%s: unable to initialize the clk dividers\n",
-								__func__);
-		return rc;
+	pinfo->clk_rate = mdss_dsi_calc_bitclk(pinfo, pinfo->mipi.frame_rate);
+	if (!pinfo->clk_rate) {
+		pr_err("%s: unable to calculate the DSI bit clock\n", __func__);
+		return -EINVAL;
 	}
+
+	pinfo->mipi.dsi_pclk_rate = mdss_dsi_get_pclk_rate(pinfo,
+		pinfo->clk_rate);
+	if (!pinfo->mipi.dsi_pclk_rate) {
+		pr_err("%s: unable to calculate the DSI pclk\n", __func__);
+		return -EINVAL;
+	}
+
 	ctrl_pdata->refresh_clk_rate = false;
 	ctrl_pdata->pclk_rate = pdata->panel_info.mipi.dsi_pclk_rate;
 	ctrl_pdata->byte_clk_rate = pdata->panel_info.clk_rate / 8;
@@ -1539,7 +1530,7 @@ int mdss_dsi_clk_refresh(struct mdss_panel_data *pdata, bool update_phy)
 		/* phy panel timing calaculation */
 		rc = mdss_dsi_phy_calc_timing_param(pinfo,
 				ctrl_pdata->shared_data->phy_rev,
-				pinfo->mipi.frame_rate);
+				pdata->panel_info.clk_rate);
 		if (rc) {
 			pr_err("Error in calculating phy timings\n");
 			return rc;
@@ -1628,18 +1619,6 @@ int mdss_dsi_core_clk_init(struct platform_device *pdev,
 	if (IS_ERR(sdata->mnoc_clk)) {
 		pr_debug("%s: Unable to get mnoc clk\n", __func__);
 		sdata->mnoc_clk = NULL;
-	}
-
-	sdata->tbu_clk = devm_clk_get(dev, "tbu_clk");
-	if (IS_ERR(sdata->tbu_clk)) {
-		pr_debug("%s: can't find mdp tbu clk. rc=%d\n", __func__, rc);
-		sdata->tbu_clk = NULL;
-	}
-
-	sdata->tbu_rt_clk = devm_clk_get(dev, "tbu_rt_clk");
-	if (IS_ERR(sdata->tbu_rt_clk)) {
-		pr_debug("%s: can't find mdp tbu_rt clk rc=%d\n", __func__, rc);
-		sdata->tbu_rt_clk = NULL;
 	}
 
 error:
@@ -1838,16 +1817,9 @@ bool is_diff_frame_rate(struct mdss_panel_info *panel_info,
 		return (frame_rate != panel_info->mipi.frame_rate);
 }
 
-int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
-			    int frame_rate)
+static u8 mdss_dsi_get_lane_cnt(struct mdss_panel_info *panel_info)
 {
-	struct mdss_panel_data *pdata  = container_of(panel_info,
-			struct mdss_panel_data, panel_info);
-	struct  mdss_dsi_ctrl_pdata *ctrl_pdata = container_of(pdata,
-			struct mdss_dsi_ctrl_pdata, panel_data);
-	u64 h_period, v_period, clk_rate;
-	u32 dsi_pclk_rate;
-	u8 lanes = 0, bpp;
+	u8 lanes = 0;
 
 	if (!panel_info)
 		return -EINVAL;
@@ -1861,7 +1833,17 @@ int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
 	if (panel_info->mipi.data_lane0)
 		lanes += 1;
 
-	switch (panel_info->mipi.dst_format) {
+	if (!lanes)
+		lanes = 1;
+
+	return lanes;
+}
+
+static u8 mdss_dsi_get_bpp(char dst_format)
+{
+	u8 bpp = 0;
+
+	switch (dst_format) {
 	case DSI_CMD_DST_FORMAT_RGB888:
 	case DSI_VIDEO_DST_FORMAT_RGB888:
 	case DSI_VIDEO_DST_FORMAT_RGB666_LOOSE:
@@ -1875,6 +1857,21 @@ int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
 		bpp = 3;	/* Default format set to RGB888 */
 		break;
 	}
+	return bpp;
+}
+
+u64 mdss_dsi_calc_bitclk(struct mdss_panel_info *panel_info, int frame_rate)
+{
+	struct mdss_panel_data *pdata  = container_of(panel_info,
+		struct mdss_panel_data, panel_info);
+	struct  mdss_dsi_ctrl_pdata *ctrl_pdata = container_of(pdata,
+		struct mdss_dsi_ctrl_pdata, panel_data);
+	u64 h_period, v_period, clk_rate = 0;
+	u8 lanes = 0, bpp;
+
+	lanes = mdss_dsi_get_lane_cnt(panel_info);
+
+	bpp = mdss_dsi_get_bpp(panel_info->mipi.dst_format);
 
 	h_period = mdss_panel_get_htotal(panel_info, true);
 	if (panel_info->split_link_enabled)
@@ -1882,35 +1879,40 @@ int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
 	v_period = mdss_panel_get_vtotal(panel_info);
 
 	if (ctrl_pdata->refresh_clk_rate || is_diff_frame_rate(panel_info,
-			frame_rate) || (!panel_info->clk_rate)) {
-		if (lanes > 0) {
-			panel_info->clk_rate = h_period * v_period * frame_rate
-				* bpp * 8;
-			do_div(panel_info->clk_rate, lanes);
-		} else {
-			pr_err("%s: forcing mdss_dsi lanes to 1\n", __func__);
-			panel_info->clk_rate =
-				h_period * v_period * frame_rate * bpp * 8;
-		}
+		frame_rate) || (!panel_info->clk_rate)) {
+		clk_rate = h_period * v_period * frame_rate * bpp * 8;
+		do_div(clk_rate, lanes);
+	} else if (panel_info->clk_rate) {
+		clk_rate = panel_info->clk_rate;
 	}
 
-	if (panel_info->clk_rate == 0)
-		panel_info->clk_rate = 454000000;
+	if (clk_rate == 0)
+		clk_rate = 454000000;
 
-	clk_rate = panel_info->clk_rate;
+	return clk_rate;
+}
+
+u32 mdss_dsi_get_pclk_rate(struct mdss_panel_info *panel_info, u64 clk_rate)
+{
+	u8 lanes = 0, bpp;
+	u32 pclk_rate = 0;
+
+	lanes = mdss_dsi_get_lane_cnt(panel_info);
+
+	bpp = mdss_dsi_get_bpp(panel_info->mipi.dst_format);
+
 	do_div(clk_rate, 8 * bpp);
 
 	if (panel_info->split_link_enabled)
-		dsi_pclk_rate = (u32) clk_rate *
+		pclk_rate = (u32) clk_rate *
 			panel_info->mipi.lanes_per_sublink;
 	else
-		dsi_pclk_rate = (u32) clk_rate * lanes;
+		pclk_rate = (u32) clk_rate * lanes;
 
-	if ((dsi_pclk_rate < 3300000) || (dsi_pclk_rate > 250000000))
-		dsi_pclk_rate = 35000000;
-	panel_info->mipi.dsi_pclk_rate = dsi_pclk_rate;
+	if ((pclk_rate < 3300000) || (pclk_rate > 250000000))
+		pclk_rate = 35000000;
 
-	return 0;
+	return pclk_rate;
 }
 
 static bool mdss_dsi_is_ulps_req_valid(struct mdss_dsi_ctrl_pdata *ctrl,
@@ -2086,19 +2088,11 @@ static int mdss_dsi_ulps_config(struct mdss_dsi_ctrl_pdata *ctrl,
 	int enable)
 {
 	int ret = 0;
-#ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
-	struct mdss_panel_data *pdata = &ctrl->panel_data;
-#endif
 
 	if (!ctrl) {
 		pr_err("%s: invalid input\n", __func__);
 		return -EINVAL;
 	}
-
-#ifdef CONFIG_FB_MSM_MDSS_SPECIFIC_PANEL
-	if (!mdss_dsi_ulps_feature_enabled(pdata))
-		return 0;
-#endif
 
 	if (!mdss_dsi_is_ulps_req_valid(ctrl, enable)) {
 		pr_debug("%s: skiping ULPS config for ctrl%d, enable=%d\n",

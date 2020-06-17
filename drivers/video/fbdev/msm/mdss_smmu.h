@@ -161,13 +161,8 @@ static inline int mdss_smmu_get_domain_type(u64 flags, bool rotator)
 static inline int mdss_smmu_attach(struct mdss_data_type *mdata)
 {
 	int rc;
-	bool skip_lock = false;
 
-	if (unlikely(!mdata->mdss_util->iommu_lock))
-		skip_lock = true;
-
-	if (likely(!skip_lock))
-		mdata->mdss_util->iommu_lock();
+	mdata->mdss_util->iommu_lock();
 	MDSS_XLOG(mdata->iommu_attached);
 
 	if (mdata->iommu_attached) {
@@ -177,7 +172,6 @@ static inline int mdss_smmu_attach(struct mdss_data_type *mdata)
 	}
 
 	if (!mdata->smmu_ops.smmu_attach) {
-		pr_err("No smmu_attach function!!!!\n");
 		rc = -ENODEV;
 		goto end;
 	}
@@ -187,8 +181,7 @@ static inline int mdss_smmu_attach(struct mdss_data_type *mdata)
 		mdata->iommu_attached = true;
 
 end:
-	if (likely(!skip_lock))
-		mdata->mdss_util->iommu_unlock();
+	mdata->mdss_util->iommu_unlock();
 	return rc;
 }
 

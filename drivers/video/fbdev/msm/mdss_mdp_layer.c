@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -990,9 +990,8 @@ static int __validate_layer_reconfig(struct mdp_input_layer *layer,
 	 * Invalidate any reconfig of CSC block on staged pipe.
 	 */
 	if (!is_csc_db &&
-		((!!pipe->src_fmt->is_yuv != !!layer_src_fmt->is_yuv) ||
 		(pipe->src_fmt->is_yuv && layer_src_fmt->is_yuv &&
-		pipe->csc_coeff_set != layer->color_space))) {
+		pipe->csc_coeff_set != layer->color_space)) {
 		pr_err("CSC reconfig not allowed on staged pipe\n");
 		status = -EINVAL;
 		goto err_exit;
@@ -1236,15 +1235,6 @@ static int __configure_pipe_params(struct msm_fb_data_type *mfd,
 		goto end;
 	}
 
-	/* scaling is not allowed for solid_fill layers */
-	if ((pipe->flags & MDP_SOLID_FILL) &&
-		((pipe->src.w != pipe->dst.w) ||
-			(pipe->src.h != pipe->dst.h))) {
-		pr_err("solid fill pipe:%d cannot have scaling\n", pipe->num);
-		ret = -EINVAL;
-		goto end;
-	}
-
 	/*
 	 * unstage the pipe if it's current z_order does not match with new
 	 * z_order because client may only call the validate.
@@ -1417,11 +1407,12 @@ static struct mdss_fence *__create_fence(struct msm_fb_data_type *mfd,
 
 	if ((fence_type == MDSS_MDP_RETIRE_FENCE) &&
 		(mfd->panel.type == MIPI_CMD_PANEL)) {
-		if (mdp5_data->vsync_timeline) {
-			value = 1 + mdp5_data->retire_cnt++;
+		if (sync_pt_data->timeline_retire) {
+			value = sync_pt_data->timeline_retire->value + 1 +
+				mdp5_data->retire_cnt++;
 			sync_fence = mdss_fb_sync_get_fence(
-				mdp5_data->vsync_timeline, fence_name,
-				value);
+				sync_pt_data->timeline_retire,
+				fence_name, value);
 		} else {
 			return ERR_PTR(-EPERM);
 		}
